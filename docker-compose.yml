@@ -15,7 +15,7 @@
 #
 # PORTE ESPOSTE:
 #   - 8200: Vault UI e API
-#   - 3306: MySQL
+#   - 3307: MySQL
 #
 # ============================================
 
@@ -54,7 +54,7 @@ services:
     image: mysql:8.0
     container_name: securefileshare-mysql
     ports:
-      - "3306:3306"
+      - "3307:3306"
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: ${MYSQL_DATABASE}

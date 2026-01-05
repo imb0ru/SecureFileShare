@@ -1,5 +1,6 @@
 package app.security;
 
+import app.config.EnvLoader;
 import io.github.jopenlibs.vault.Vault;
 import io.github.jopenlibs.vault.VaultConfig;
 import io.github.jopenlibs.vault.VaultException;
@@ -18,6 +19,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * - secret/securefileshare/encryption: chiave AES (aes_key, algorithm, key_size)
  * 
  * Le altre configurazioni sono gestite da variabili d'ambiente (.env).
+ * 
+ * Le variabili VAULT_ADDR e VAULT_TOKEN vengono lette dal file .env
+ * tramite EnvLoader (con fallback su variabili d'ambiente di sistema).
  * 
  * NON esistono fallback: se Vault non è disponibile o mancano segreti,
  * l'applicazione non parte.
@@ -46,18 +50,22 @@ public final class VaultClient {
      * @throws VaultException se VAULT_ADDR o VAULT_TOKEN non sono configurati
      */
     private VaultClient() throws VaultException {
+        // Usa EnvLoader per leggere dal .env (con fallback su System.getenv)
+        EnvLoader env = EnvLoader.getInstance();
+        
         // VAULT_ADDR obbligatorio
-        this.vaultAddress = System.getenv("VAULT_ADDR");
+        this.vaultAddress = env.get("VAULT_ADDR");
         if (vaultAddress == null || vaultAddress.isEmpty()) {
-            throw new VaultException("VAULT_ADDR non configurato! " +
-                    "Imposta la variabile d'ambiente VAULT_ADDR (es. http://localhost:8200)");
+            throw new VaultException("VAULT_ADDR non configurato!\n" +
+                    "Aggiungi VAULT_ADDR al file .env (es. http://localhost:8200)");
         }
         
         // VAULT_TOKEN obbligatorio
-        String vaultToken = System.getenv("VAULT_TOKEN");
+        String vaultToken = env.get("VAULT_TOKEN");
         if (vaultToken == null || vaultToken.isEmpty()) {
-            throw new VaultException("VAULT_TOKEN non configurato! " +
-                    "Recupera il token con: cat vault/generated-token.txt");
+            throw new VaultException("VAULT_TOKEN non configurato!\n" +
+                    "Recupera il token con: cat vault/generated-token.txt\n" +
+                    "Poi aggiungilo al file .env");
         }
         
         VaultConfig config = new VaultConfig()

@@ -6,11 +6,19 @@ import app.security.VaultClient;
  * Gestisce le configurazioni dell'applicazione.
  *
  * TUTTE le configurazioni vengono lette da:
- * - Variabili d'ambiente (.env)
- * - HashiCorp Vault (per credenziali DB e chiavi)
+ * - File .env (caricato automaticamente da EnvLoader)
+ * - Variabili d'ambiente di sistema (hanno priorità sul .env)
+ * - HashiCorp Vault (per credenziali DB e chiavi crittografiche)
  *
  * NON esistono fallback o valori di default hardcoded.
  * Se una configurazione manca, l'applicazione non parte.
+ * 
+ * ORDINE DI RICERCA FILE .env:
+ * 1. Path in ENV_FILE_PATH (variabile d'ambiente)
+ * 2. Directory corrente (user.dir)
+ * 3. ~/.securefileshare/.env
+ * 4. $CATALINA_HOME/.env
+ * 5. $CATALINA_HOME/webapps/SecureFileShare/.env
  *
  * @author Sicurezza nelle Applicazioni - UniBa
  */
@@ -18,11 +26,16 @@ public final class AppConfig {
 
     private static volatile AppConfig instance;
     private final VaultClient vaultClient;
+    private final EnvLoader envLoader;
 
     /**
      * Costruttore privato per il pattern Singleton.
      */
     private AppConfig() {
+        // Carica variabili dal file .env
+        this.envLoader = EnvLoader.getInstance();
+        envLoader.printDebugInfo();
+        
         // Connessione a Vault (OBBLIGATORIA)
         VaultClient tempClient = null;
         try {
@@ -37,10 +50,10 @@ public final class AppConfig {
             System.err.println("[AppConfig] ║  L'applicazione richiede Vault per avviarsi.          ║");
             System.err.println("[AppConfig] ║                                                       ║");
             System.err.println("[AppConfig] ║  1. Copia .env.example in .env                        ║");
-            System.err.println("[AppConfig] ║  2. Configura le variabili nel .env                   ║");
+            System.err.println("[AppConfig] ║  2. Configura VAULT_ADDR e VAULT_TOKEN nel .env       ║");
             System.err.println("[AppConfig] ║  3. Avvia: docker-compose up -d                       ║");
             System.err.println("[AppConfig] ║  4. Recupera token: cat vault/generated-token.txt     ║");
-            System.err.println("[AppConfig] ║  5. Imposta VAULT_TOKEN in Tomcat setenv.sh           ║");
+            System.err.println("[AppConfig] ║  5. Inserisci il token nel .env                       ║");
             System.err.println("[AppConfig] ╚═══════════════════════════════════════════════════════╝");
             throw new IllegalStateException("Vault non disponibile: " + e.getMessage(), e);
         }
@@ -67,68 +80,19 @@ public final class AppConfig {
 
         StringBuilder missing = new StringBuilder();
         for (String var : required) {
-            if (getEnv(var) == null) {
+            if (envLoader.get(var) == null) {
                 missing.append("\n  - ").append(var);
             }
         }
 
         if (!missing.isEmpty()) {
+            String envPath = envLoader.getLoadedFilePath();
             throw new IllegalStateException(
                     "Variabili d'ambiente mancanti:" + missing +
-                            "\n\nConfigura queste variabili in .env e assicurati che siano " +
-                            "passate a Tomcat tramite setenv.sh/setenv.bat");
+                    "\n\nFile .env caricato: " + (envPath != null ? envPath : "NESSUNO") +
+                    "\n\nAssicurati che tutte le variabili siano definite nel file .env"
+            );
         }
-    }
-
-    /**
-     * Legge una variabile d'ambiente.
-     */
-    private String getEnv(String name) {
-        return System.getenv(name);
-    }
-
-    /**
-     * Legge una variabile d'ambiente obbligatoria.
-     * @throws IllegalStateException se non impostata
-     */
-    private String requireEnv(String name) {
-        String value = getEnv(name);
-        if (value == null || value.trim().isEmpty()) {
-            throw new IllegalStateException("Variabile d'ambiente richiesta non impostata: " + name);
-        }
-        return value.trim();
-    }
-
-    /**
-     * Legge una variabile d'ambiente come intero.
-     */
-    private int requireEnvInt(String name) {
-        String value = requireEnv(name);
-        try {
-            return Integer.parseInt(value);
-        } catch (NumberFormatException e) {
-            throw new IllegalStateException("Variabile " + name + " non è un numero valido: " + value);
-        }
-    }
-
-    /**
-     * Legge una variabile d'ambiente come long.
-     */
-    private long requireEnvLong(String name) {
-        String value = requireEnv(name);
-        try {
-            return Long.parseLong(value);
-        } catch (NumberFormatException e) {
-            throw new IllegalStateException("Variabile " + name + " non è un numero valido: " + value);
-        }
-    }
-
-    /**
-     * Legge una variabile d'ambiente come boolean.
-     */
-    private boolean requireEnvBoolean(String name) {
-        String value = requireEnv(name).toLowerCase();
-        return "true".equals(value) || "1".equals(value) || "yes".equals(value);
     }
 
     /**
@@ -151,6 +115,13 @@ public final class AppConfig {
     public boolean isVaultAvailable() {
         return vaultClient != null && vaultClient.isConnected();
     }
+    
+    /**
+     * @return il percorso del file .env caricato
+     */
+    public String getEnvFilePath() {
+        return envLoader.getLoadedFilePath();
+    }
 
     // ========== Database (da Vault) ==========
 
@@ -166,10 +137,10 @@ public final class AppConfig {
         return vaultClient.getDatabasePassword().toCharArray();
     }
 
-    // ========== Upload (da env) ==========
+    // ========== Upload (da .env) ==========
 
     public String getUploadDirectory() {
-        String configuredPath = requireEnv("UPLOAD_DIRECTORY");
+        String configuredPath = envLoader.require("UPLOAD_DIRECTORY");
         java.io.File file = new java.io.File(configuredPath);
 
         // Path assoluto
@@ -181,7 +152,7 @@ public final class AppConfig {
         // Path relativo → {user.home}/SecureFileShare/{path}
         String userHome = System.getProperty("user.home");
         file = new java.io.File(userHome, "SecureFileShare/" + configuredPath);
-
+        
         ensureDirectoryExists(file);
         return file.getAbsolutePath();
     }
@@ -208,75 +179,75 @@ public final class AppConfig {
 
 
     public long getMaxFileSize() {
-        return requireEnvLong("UPLOAD_MAX_SIZE");
+        return envLoader.requireLong("UPLOAD_MAX_SIZE");
     }
 
-    // ========== Sessione (da env) ==========
+    // ========== Sessione (da .env) ==========
 
     public int getSessionTimeout() {
-        return requireEnvInt("SESSION_TIMEOUT");
+        return envLoader.requireInt("SESSION_TIMEOUT");
     }
 
-    // ========== Cookie (da env) ==========
+    // ========== Cookie (da .env) ==========
 
     public boolean isCookieSecure() {
-        return requireEnvBoolean("COOKIE_SECURE");
+        return envLoader.requireBoolean("COOKIE_SECURE");
     }
 
     public boolean isCookieHttpOnly() {
-        return requireEnvBoolean("COOKIE_HTTPONLY");
+        return envLoader.requireBoolean("COOKIE_HTTPONLY");
     }
 
     public String getCookieSameSite() {
-        return requireEnv("COOKIE_SAMESITE");
+        return envLoader.require("COOKIE_SAMESITE");
     }
 
-    // ========== HSTS (da env) ==========
+    // ========== HSTS (da .env) ==========
 
     public boolean isHstsEnabled() {
-        return requireEnvBoolean("HSTS_ENABLED");
+        return envLoader.requireBoolean("HSTS_ENABLED");
     }
 
     public int getHstsMaxAge() {
-        return requireEnvInt("HSTS_MAX_AGE");
+        return envLoader.requireInt("HSTS_MAX_AGE");
     }
 
     public boolean isHstsIncludeSubDomains() {
-        return requireEnvBoolean("HSTS_INCLUDE_SUBDOMAINS");
+        return envLoader.requireBoolean("HSTS_INCLUDE_SUBDOMAINS");
     }
 
-    // ========== Sicurezza Password (da env) ==========
+    // ========== Sicurezza Password (da .env) ==========
 
     public int getPbkdf2Iterations() {
-        return requireEnvInt("PBKDF2_ITERATIONS");
+        return envLoader.requireInt("PBKDF2_ITERATIONS");
     }
 
     public int getSaltLength() {
-        return requireEnvInt("SALT_LENGTH");
+        return envLoader.requireInt("SALT_LENGTH");
     }
 
     public int getKeyLength() {
-        return requireEnvInt("KEY_LENGTH");
+        return envLoader.requireInt("KEY_LENGTH");
     }
 
-    // ========== Validazione Input (da env) ==========
+    // ========== Validazione Input (da .env) ==========
 
     public int getPasswordMinLength() {
-        return requireEnvInt("PASSWORD_MIN_LENGTH");
+        return envLoader.requireInt("PASSWORD_MIN_LENGTH");
     }
 
     public int getPasswordMaxLength() {
-        return requireEnvInt("PASSWORD_MAX_LENGTH");
+        return envLoader.requireInt("PASSWORD_MAX_LENGTH");
     }
 
     public int getEmailMaxLength() {
-        return requireEnvInt("EMAIL_MAX_LENGTH");
+        return envLoader.requireInt("EMAIL_MAX_LENGTH");
     }
 
-    // ========== File Upload Whitelist (da env) ==========
+    // ========== File Upload Whitelist (da .env) ==========
 
     public java.util.Set<String> getAllowedExtensions() {
-        String extensions = requireEnv("FILE_ALLOWED_EXTENSIONS");
+        String extensions = envLoader.require("FILE_ALLOWED_EXTENSIONS");
         java.util.Set<String> result = new java.util.HashSet<>();
         for (String ext : extensions.split(",")) {
             String trimmed = ext.trim().toLowerCase();
@@ -291,7 +262,7 @@ public final class AppConfig {
     }
 
     public java.util.Set<String> getAllowedMimeTypes() {
-        String mimeTypes = requireEnv("FILE_ALLOWED_MIMETYPES");
+        String mimeTypes = envLoader.require("FILE_ALLOWED_MIMETYPES");
         java.util.Set<String> result = new java.util.HashSet<>();
         for (String mime : mimeTypes.split(",")) {
             String trimmed = mime.trim().toLowerCase();
@@ -303,13 +274,13 @@ public final class AppConfig {
     }
 
     public int getFileBufferSize() {
-        return requireEnvInt("FILE_BUFFER_SIZE");
+        return envLoader.requireInt("FILE_BUFFER_SIZE");
     }
 
-    // ========== CSP Nonce (da env) ==========
+    // ========== CSP Nonce (da .env) ==========
 
     public int getNonceLength() {
-        return requireEnvInt("NONCE_LENGTH");
+        return envLoader.requireInt("NONCE_LENGTH");
     }
 
     /**
@@ -318,6 +289,8 @@ public final class AppConfig {
     public void printConfiguration() {
         System.out.println("╔══════════════════════════════════════════════════════════╗");
         System.out.println("║         SecureFileShare - Configurazione                 ║");
+        System.out.println("╠══════════════════════════════════════════════════════════╣");
+        System.out.println("║ 📄 .env:          " + padRight(envLoader.isEnvFileLoaded() ? "✓ Caricato" : "✗ Non trovato", 39) + "║");
         System.out.println("╠══════════════════════════════════════════════════════════╣");
         System.out.println("║ 🔐 Vault:         " + padRight("CONNESSO", 39) + "║");
         System.out.println("║    Indirizzo:     " + padRight(vaultClient.getVaultAddress(), 39) + "║");

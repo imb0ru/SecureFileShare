@@ -17,27 +17,14 @@ Implementa le best practice di sicurezza trattate nel corso.
 
 ```
 SecureFileShare/
-├── sql/                            # Schema database
-├── src/main/java/app
-│   ├── controller/                 # Servlet
-│   ├── dao/                        # Accesso database
-│   ├── filter/                     # Filtri sicurezza
-│   ├── security/                   # Crittografia, Vault, validazione
-│   ├── config/                     # Configurazione applicazione
-│   └── model/                      # Entità
-├── src/main/webapp/
-│   ├── WEB-INF/                    # web.xml, pagine errore
-│   ├── META-INF/                   # Manifest
-│   ├── css/                        # Stili
-│   ├── js/                         # JavaScript
-│   └── *.jsp                       # Pagine
-├── vault/                          # Configurazione e init Vault
+├── .env.example                    # Template configurazione (da copiare in .env)
+├── .env                            # Configurazione (da creare)
 ├── docker-compose.yml              # Configurazione Docker
-├── .env.example                    # Template variabili d'ambiente
-├── pom.xml                         # Dipendenze Maven
 ├── SecureFileShare.war             # Applicazione compilata
-├── setup.bat                       # Script installazione (Windows)
-└── setup.sh                        # Script installazione (macOS/Linux)
+├── sql/                            # Schema database
+├── vault/                          # Configurazione Vault
+├── pom.xml                         # Dipendenze Maven
+└── src/                            # Codice sorgente
 ```
 
 ---
@@ -46,10 +33,10 @@ SecureFileShare/
 
 | Software | Versione | Note |
 |----------|----------|------|
-| Java JDK | 17+ | `JAVA_HOME` deve essere impostato |
-| Apache Tomcat | 11.0+ | `CATALINA_HOME` deve essere impostato |
+| Java JDK | 17+ | |
+| Apache Tomcat | 11.0+ | |
 | Docker Desktop | - | Deve essere **avviato** |
-| Maven | 3.8+ | Solo se si vuole ricompilare |
+| Maven | 3.8+ | Solo per ricompilare |
 
 ---
 
@@ -57,383 +44,190 @@ SecureFileShare/
 
 | Categoria | Implementazione |
 |-----------|-----------------|
-| **Trasporto** | HTTPS obbligatorio, HSTS, redirect automatico |
-| **Password** | PBKDF2-HMAC-SHA256, 310.000 iterazioni, salt 16 byte |
-| **File** | AES-256-GCM, IV random, chiave in Vault |
-| **Email** | Cifrate AES-256-GCM + hash SHA-256 per ricerca |
-| **XSS** | Output encoding (JSTL), CSP con nonce dinamico |
-| **SQL Injection** | PreparedStatement su tutte le query |
-| **Session** | Rigenerazione ID al login, timeout 30 min |
+| **Trasporto** | HTTPS obbligatorio, HSTS |
+| **Password** | PBKDF2-HMAC-SHA256, 310.000 iterazioni |
+| **File** | AES-256-GCM, chiave in Vault |
+| **Email** | Cifrate AES-256-GCM + hash SHA-256 |
+| **XSS** | Output encoding JSTL, CSP con nonce, sanitizzazione server-side |
+| **SQL Injection** | PreparedStatement |
+| **Session** | Rigenerazione ID, timeout configurabile |
 | **Cookie** | HttpOnly, Secure, SameSite=Strict |
 | **Segreti** | HashiCorp Vault |
-| **Upload** | Validazione MIME con Apache Tika, whitelist tipi |
-| **Concorrenza** | ReadWriteLock per accesso file thread-safe |
+| **Upload** | Validazione MIME con Apache Tika |
+| **Concorrenza** | ReadWriteLock thread-safe |
 
 ---
 
 ## Installazione
 
-### 1. Estrai il progetto
-
-Estrai `SecureFileShare.zip` in una cartella a scelta.
-
-### 2. Configura le credenziali (.env)
-
-**⚠️ OBBLIGATORIO: Tutte le configurazioni sono in `.env`**
+### 1. Estrai e configura
 
 ```bash
-# Copia il template
+# Estrai il progetto
+unzip SecureFileShare.zip
+cd SecureFileShare
+
+# Crea il file di configurazione
 cp .env.example .env
 
-# Modifica con le tue credenziali
-nano .env   # oppure il tuo editor preferito
+# Modifica le configurazioni
+nano .env
 ```
 
-**Variabili principali in `.env`:**
+**Modifica obbligatoria nel `.env`:**
 
-| Variabile | Descrizione |
-|-----------|-------------|
-| `MYSQL_ROOT_PASSWORD` | Password root MySQL |
-| `MYSQL_USER` | Username app per MySQL |
-| `MYSQL_PASSWORD` | Password app per MySQL |
-| `VAULT_TOKEN` | Token Vault (generato automaticamente, vedi step 4) |
-| `AES_ENCRYPTION_KEY` | Chiave AES-256 (opzionale, generata automaticamente) |
-| `SESSION_TIMEOUT` | Timeout sessione in secondi (default: 900) |
-| `COOKIE_SECURE` | Cookie solo HTTPS (default: true) |
-| `COOKIE_HTTPONLY` | Cookie non accessibile da JS (default: true) |
-| `COOKIE_SAMESITE` | Protezione CSRF (default: Strict) |
-
-> ℹ️ Vedi `.env.example` per la lista completa delle variabili.
-
-**Genera password sicure:**
 ```bash
-openssl rand -base64 32
+# Percorsi Java e Tomcat (adatta al tuo sistema)
+JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+CATALINA_HOME=/opt/tomcat11
+
+# Password sicure (genera con: openssl rand -base64 32)
+MYSQL_ROOT_PASSWORD=genera_password_sicura_1
+MYSQL_PASSWORD=genera_password_sicura_2
 ```
 
-### 3. Avvia Docker (Vault + MySQL)
+### 2. Avvia Docker
 
 ```bash
 docker-compose up -d
 ```
 
-Questo avvia:
-- **Vault** in server mode
-- **MySQL** con lo schema dell'applicazione
-- **vault-init** che automaticamente:
-  - Inizializza Vault (primo avvio)
-  - Esegue unseal
-  - Configura tutti i segreti da `.env`
-
-### 4. Recupera il VAULT_TOKEN
-
-Il token viene salvato automaticamente in un file:
+Attendi qualche secondo, poi recupera il token Vault:
 
 ```bash
 cat vault/generated-token.txt
 ```
 
-Copia questo token nel file `.env`:
-```
-VAULT_TOKEN=hvs.xxxxxxxxxxxxx
-```
+Aggiungi il token al `.env`:
 
-> ℹ️ Ai riavvii successivi, vault-init esegue solo unseal (le chiavi sono persistite nel volume).
-
-### 5. Configura Tomcat per leggere le variabili d'ambiente
-
-L'applicazione legge **tutte** le configurazioni da variabili d'ambiente.
-Configura Tomcat per passarle:
-
-**macOS / Linux** (`$CATALINA_HOME/bin/setenv.sh`):
 ```bash
-#!/bin/bash
-# Vault
-export VAULT_ADDR="http://localhost:8200"
-export VAULT_TOKEN="$(cat /path/to/SecureFileShare/vault/generated-token.txt)"
-
-# Upload
-export UPLOAD_DIRECTORY="uploads"
-export UPLOAD_MAX_SIZE="1048576"
-
-# Validazione
-export PASSWORD_MIN_LENGTH="12"
-export PASSWORD_MAX_LENGTH="128"
-export EMAIL_MAX_LENGTH="254"
-
-# File whitelist
-export FILE_ALLOWED_EXTENSIONS=".txt"
-export FILE_ALLOWED_MIMETYPES="text/plain"
-export FILE_BUFFER_SIZE="8192"
-
-# Sessione e Cookie
-export SESSION_TIMEOUT="900"
-export COOKIE_SECURE="true"
-export COOKIE_HTTPONLY="true"
-export COOKIE_SAMESITE="Strict"
-
-# HSTS
-export HSTS_ENABLED="true"
-export HSTS_MAX_AGE="31536000"
-export HSTS_INCLUDE_SUBDOMAINS="true"
-
-# Sicurezza password
-export PBKDF2_ITERATIONS="310000"
-export SALT_LENGTH="16"
-export KEY_LENGTH="256"
-export NONCE_LENGTH="16"
+VAULT_TOKEN=hvs.xxxxxxxxxxxxxx
 ```
 
-**Windows** (`%CATALINA_HOME%\bin\setenv.bat`):
-```cmd
-@echo off
-rem Vault
-set VAULT_ADDR=http://localhost:8200
-set /p VAULT_TOKEN=<vault\generated-token.txt
+### 3. Configura HTTPS in Tomcat
 
-rem Upload
-set UPLOAD_DIRECTORY=uploads
-set UPLOAD_MAX_SIZE=1048576
+**Genera certificato (sviluppo):**
 
-rem Validazione
-set PASSWORD_MIN_LENGTH=12
-set PASSWORD_MAX_LENGTH=128
-set EMAIL_MAX_LENGTH=254
-
-rem File whitelist
-set FILE_ALLOWED_EXTENSIONS=.txt
-set FILE_ALLOWED_MIMETYPES=text/plain
-set FILE_BUFFER_SIZE=8192
-
-rem Sessione e Cookie
-set SESSION_TIMEOUT=900
-set COOKIE_SECURE=true
-set COOKIE_HTTPONLY=true
-set COOKIE_SAMESITE=Strict
-
-rem HSTS
-set HSTS_ENABLED=true
-set HSTS_MAX_AGE=31536000
-set HSTS_INCLUDE_SUBDOMAINS=true
-
-rem Sicurezza password
-set PBKDF2_ITERATIONS=310000
-set SALT_LENGTH=16
-set KEY_LENGTH=256
-set NONCE_LENGTH=16
-```
-
-> ⚠️ Crea il file `setenv.sh` / `setenv.bat` se non esiste. Su Linux/macOS rendi eseguibile con `chmod +x setenv.sh`.
-
-### 6. Esegui setup
-
-**Windows:**
-```cmd
-setup.bat
-```
-
-**macOS / Linux:**
 ```bash
-chmod +x setup.sh
-./setup.sh
+source .env
+
+keytool -genkey -alias tomcat -keyalg RSA -keysize 2048 \
+    -keystore "$CATALINA_HOME/conf/keystore.jks" \
+    -validity 365 -storepass changeit -keypass changeit \
+    -dname "CN=localhost, OU=Dev, O=SecureFileShare, L=Bari, C=IT"
 ```
 
-Lo script automaticamente:
-- Genera il certificato HTTPS
-- Configura Tomcat
-- Deploya il WAR
-- Avvia Tomcat
-- Apre il browser
+**Configura connector HTTPS:**
 
-### 7. Accedi all'applicazione
+Modifica `$CATALINA_HOME/conf/server.xml`, aggiungi dopo il connector HTTP (porta 8080):
 
+```xml
+<Connector port="8443" 
+           protocol="org.apache.coyote.http11.Http11NioProtocol"
+           maxThreads="150" 
+           SSLEnabled="true"
+           scheme="https" 
+           secure="true">
+    <SSLHostConfig>
+        <Certificate certificateKeystoreFile="conf/keystore.jks"
+                     certificateKeystorePassword="changeit"
+                     type="RSA" />
+    </SSLHostConfig>
+</Connector>
 ```
-https://localhost:8443/SecureFileShare
+
+### 4. Deploy
+
+```bash
+source .env
+
+# Copia il WAR
+cp SecureFileShare.war "$CATALINA_HOME/webapps/"
+
+# Avvia Tomcat (estrae il WAR)
+"$CATALINA_HOME/bin/startup.sh"
+
+# Attendi qualche secondo, poi copia il .env nella webapp
+cp .env "$CATALINA_HOME/webapps/SecureFileShare/"
 ```
 
-> ⚠️ Il browser mostrerà un avviso sul certificato (è autofirmato).  
-> Clicca **"Avanzate"** → **"Procedi comunque"**.
+### 5. Accedi
+
+Apri: **https://localhost:8443/SecureFileShare**
+
+> ⚠️ Accetta l'avviso del certificato self-signed.
 
 ---
 
-## Arresto
+## Configurazione IDE (Eclipse)
 
-Per fermare l'applicazione:
-
-**Windows:**
-```cmd
-"%CATALINA_HOME%\bin\shutdown.bat"
-docker-compose down
-```
-
-**macOS / Linux:**
-```bash
-$CATALINA_HOME/bin/shutdown.sh
-docker-compose down
-```
+1. Configura Tomcat in Eclipse
+2. Copia il `.env` nella working directory del progetto
+3. Oppure imposta `ENV_FILE_PATH=/percorso/al/.env` nelle Run Configurations → Environment
 
 ---
 
 ## Risoluzione Problemi
 
-### Verifica variabili d'ambiente
+### File .env non trovato
 
-**Windows:**
-```cmd
-echo %JAVA_HOME%
-echo %CATALINA_HOME%
-```
+L'applicazione cerca il `.env` in:
+1. `ENV_FILE_PATH` (variabile d'ambiente)
+2. `$CATALINA_HOME/webapps/SecureFileShare/.env`
+3. `$CATALINA_HOME/.env`
+4. Directory corrente
 
-**macOS / Linux:**
+Controlla i log: `tail -f $CATALINA_HOME/logs/catalina.out | grep EnvLoader`
+
+### VAULT_TOKEN non trovato
+
 ```bash
-echo $JAVA_HOME
-echo $CATALINA_HOME
+docker-compose logs vault-init
+cat vault/generated-token.txt
 ```
 
-Se non impostate:
+### Connessione database fallita
 
-**Windows:**
-```cmd
-set JAVA_HOME=C:\Program Files\Java\jdk-17
-set CATALINA_HOME=C:\apache-tomcat-11.0.0
-```
-
-**macOS:**
 ```bash
-export JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk-17.jdk/Contents/Home
-export CATALINA_HOME=/opt/tomcat
-```
-
-**Linux:**
-```bash
-export JAVA_HOME=/usr/lib/jvm/java-17
-export CATALINA_HOME=/opt/tomcat
-```
-
-### "Docker non trovato"
-- Avvia Docker Desktop
-- Attendi che sia completamente avviato (icona nella tray)
-- Riprova
-
-### "Porta 8443 già in uso"
-```cmd
-netstat -ano | findstr 8443
-taskkill /PID <numero_pid> /F
-```
-
-### "WAR non trovato"
-Assicurati che `SecureFileShare.war` sia nella stessa cartella di `setup.bat`.
-
-### "Errore connessione database"
-```cmd
-docker-compose ps
-docker-compose logs mysql
-```
-
-### "Errore Vault"
-```cmd
-docker-compose logs vault
+docker-compose ps                    # Verifica MySQL attivo
+docker-compose logs mysql            # Controlla errori
 ```
 
 ---
 
-## Configurazione Manuale Completa
+## Comandi Utili
 
-Se `setup.bat`/`setup.sh` non funziona:
-
-### 1. Genera keystore
-**Windows:**
-```cmd
-"%JAVA_HOME%\bin\keytool" -genkeypair ^
-    -alias tomcat ^
-    -keyalg RSA ^
-    -keysize 2048 ^
-    -validity 365 ^
-    -keystore "%CATALINA_HOME%\conf\keystore.jks" ^
-    -storepass changeit ^
-    -keypass changeit ^
-    -dname "CN=localhost, OU=SecureFileShare, O=UniBa, L=Bari, ST=Puglia, C=IT" ^
-    -ext "SAN=dns:localhost,ip:127.0.0.1"
-```
-
-**macOS / Linux:**
 ```bash
-$JAVA_HOME/bin/keytool -genkeypair \
-    -alias tomcat \
-    -keyalg RSA \
-    -keysize 2048 \
-    -validity 365 \
-    -keystore $CATALINA_HOME/conf/keystore.jks \
-    -storepass changeit \
-    -keypass changeit \
-    -dname "CN=localhost, OU=SecureFileShare, O=UniBa, L=Bari, ST=Puglia, C=IT" \
-    -ext "SAN=dns:localhost,ip:127.0.0.1"
-```
+source .env                                    # Carica variabili
 
-**Posizione Keystore**
-```
-Windows:  %CATALINA_HOME%\conf\keystore.jks
-macOS/Linux: $CATALINA_HOME/conf/keystore.jks
-```
+# Docker
+docker-compose ps                              # Stato container
+docker-compose logs -f                         # Log
+docker-compose down -v                         # Reset completo
 
-### 2. Configura server.xml
-Aggiungi in `%CATALINA_HOME%\conf\server.xml` prima di `</Service>`:
+# Tomcat
+"$CATALINA_HOME/bin/startup.sh"               # Avvia
+"$CATALINA_HOME/bin/shutdown.sh"              # Ferma
+tail -f "$CATALINA_HOME/logs/catalina.out"    # Log
 
-```xml
-<Connector port="8443" protocol="org.apache.coyote.http11.Http11NioProtocol"
-           maxThreads="150" SSLEnabled="true">
-    <SSLHostConfig>
-        <Certificate certificateKeystoreFile="conf/keystore.jks"
-                     certificateKeystorePassword="changeit"
-                     certificateKeyAlias="tomcat" type="RSA" />
-    </SSLHostConfig>
-</Connector>
-```
-
-### 3. Avvia Docker
-```bash
-docker-compose up -d
-```
-
-### 4. Deploya WAR
-
-**Windows:**
-```cmd
-copy SecureFileShare.war "%CATALINA_HOME%\webapps\"
-```
-
-**macOS / Linux:**
-```bash
-cp SecureFileShare.war $CATALINA_HOME/webapps/
-```
-
-### 5. Avvia Tomcat
-
-**Windows:**
-```cmd
-"%CATALINA_HOME%\bin\startup.bat"
-```
-
-**macOS / Linux:**
-```bash
-$CATALINA_HOME/bin/startup.sh
+# Database
+docker exec -it securefileshare-mysql mysql -u root -p
 ```
 
 ---
 
-## Tecnologie Utilizzate
+## Compilazione (Opzionale)
 
-- Java 17, Servlet 6.0, JSP, JSTL
-- Apache Tomcat 11
-- MySQL 8.0
-- HashiCorp Vault
-- Apache Tika (validazione file)
-- zxcvbn (validazione password client-side)
-- Docker Compose
+```bash
+source .env
+export JAVA_HOME
+mvn clean package
+# Output: target/SecureFileShare.war
+```
 
 ---
 
-## Autore
+## Licenza
 
-Marco Ferrara   
-m.ferrara62@studenti.uniba.it   
-864819
+Progetto per il corso di Sicurezza nelle Applicazioni  
+Università degli Studi di Bari "Aldo Moro" - A.A. 2025/2026
