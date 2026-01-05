@@ -1,0 +1,129 @@
+# ============================================
+# SecureFileShare - Docker Compose
+# ============================================
+#
+# Avvia l'infrastruttura per SecureFileShare:
+# - HashiCorp Vault: gestione segreti (credenziali, chiavi)
+# - MySQL 8.0: database applicazione
+# - vault-init: inizializza i segreti in Vault
+#
+# COMANDI:
+#   Avvio:    docker-compose up -d
+#   Stop:     docker-compose down
+#   Log:      docker-compose logs -f
+#   Reset:    docker-compose down -v (elimina anche i dati)
+#
+# PORTE ESPOSTE:
+#   - 8200: Vault UI e API
+#   - 3306: MySQL
+#
+# ============================================
+
+services:
+  # ------------------------------------------
+  # HashiCorp Vault - Gestione Segreti
+  # ------------------------------------------
+  # Vault in SERVER MODE
+  # Init e unseal automatici via vault-init
+  # ------------------------------------------
+  vault:
+    image: hashicorp/vault:1.15
+    container_name: securefileshare-vault
+    ports:
+      - "8200:8200"
+    environment:
+      VAULT_ADDR: "http://127.0.0.1:8200"
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - vault-data:/vault/data
+      - ./vault/config.hcl:/vault/config/config.hcl:ro
+    command: server -config=/vault/config/config.hcl
+    networks:
+      - securefileshare-network
+
+  # ------------------------------------------
+  # MySQL 8.0 - Database Applicazione
+  # ------------------------------------------
+  # Contiene:
+  # - users: utenti con email cifrate
+  # - uploaded_files: metadati file
+  # - login_attempts: log tentativi accesso
+  # ------------------------------------------
+  mysql:
+    image: mysql:8.0
+    container_name: securefileshare-mysql
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql  # Eseguito al primo avvio
+    command: >
+      --default-authentication-plugin=mysql_native_password
+      --require_secure_transport=OFF
+    networks:
+      - securefileshare-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ------------------------------------------
+  # Vault Init - Inizializzazione automatica
+  # ------------------------------------------
+  # Esegue auto-init, auto-unseal e configura
+  # i segreti leggendo da variabili .env
+  # ------------------------------------------
+  vault-init:
+    image: hashicorp/vault:1.15
+    container_name: securefileshare-vault-init
+    depends_on:
+      - vault
+    environment:
+      VAULT_ADDR: "http://vault:8200"
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      AES_ENCRYPTION_KEY: ${AES_ENCRYPTION_KEY}
+    volumes:
+      - vault-data:/vault/data
+      - ./vault/init-vault.sh:/init-vault.sh:ro
+      - ./vault:/vault/output    # Token file accessibile all'utente
+    entrypoint: ["/bin/sh", "/init-vault.sh"]
+    networks:
+      - securefileshare-network
+    restart: "no"
+
+# Volumi persistenti
+volumes:
+  vault-data:     # Dati Vault (persistenti)
+  mysql-data:     # Dati MySQL
+
+# Rete interna
+networks:
+  securefileshare-network:
+    driver: bridge
+
+# ============================================
+# UTILIZZO:
+#
+# 1. Copia .env.example in .env e configura
+# 2. docker-compose up -d
+# 3. Controlla i log: docker-compose logs vault-init
+# 4. Copia il ROOT_TOKEN mostrato nel .env
+# 5. Configura VAULT_TOKEN in Tomcat/IDE
+#
+# Al primo avvio vault-init:
+# - Inizializza Vault (genera unseal key)
+# - Esegue unseal automatico
+# - Configura tutti i segreti da .env
+#
+# Ai riavvii successivi:
+# - Esegue solo unseal (chiavi salvate nel volume)
+# ============================================

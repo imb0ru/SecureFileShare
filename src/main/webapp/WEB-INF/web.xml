@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ============================================
+     SecureFileShare - Deployment Descriptor
+     ============================================
+     
+     Configurazione dell'applicazione web.
+     
+     NOTA SICUREZZA:
+     - Cookie di sessione configurati da SessionCookieInitializer
+     - Filtri di sicurezza registrati via @WebFilter
+     - Pagine di errore personalizzate (no stack trace)
+     
+     @author Sicurezza nelle Applicazioni - UniBa
+     ============================================ -->
+<web-app xmlns="https://jakarta.ee/xml/ns/jakartaee"
+    version="6.0">
+    
+    <display-name>SecureFileShare</display-name>
+    
+    <!-- Pagina iniziale -->
+    <welcome-file-list>
+        <welcome-file>index.jsp</welcome-file>
+        <welcome-file>index.html</welcome-file>
+    </welcome-file-list>
+    
+    <!-- Sessione: solo cookie (no URL rewriting per sicurezza)
+         I parametri dei cookie (Secure, HttpOnly, SameSite) sono
+         configurati dinamicamente da SessionCookieInitializer -->
+    <session-config>
+        <tracking-mode>COOKIE</tracking-mode>
+    </session-config>
+    
+    <!-- Pagine di errore personalizzate
+         IMPORTANTE: non espongono stack trace o info sensibili -->
+    <error-page>
+        <error-code>400</error-code>
+        <location>/WEB-INF/error/error.jsp</location>
+    </error-page>
+    
+    <error-page>
+        <error-code>403</error-code>
+        <location>/WEB-INF/error/403.jsp</location>
+    </error-page>
+    
+    <error-page>
+        <error-code>404</error-code>
+        <location>/WEB-INF/error/404.jsp</location>
+    </error-page>
+    
+    <error-page>
+        <error-code>500</error-code>
+        <location>/WEB-INF/error/500.jsp</location>
+    </error-page>
+    
+    <!-- Cattura tutte le eccezioni non gestite -->
+    <error-page>
+        <exception-type>java.lang.Exception</exception-type>
+        <location>/WEB-INF/error/error.jsp</location>
+    </error-page>
+    
+</web-app>
